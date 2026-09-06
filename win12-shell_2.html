@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora Shell — Windows 12 Concept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#0B0E1A;
+    --bg-deep-2:#141833;
+    --glass:rgba(255,255,255,0.07);
+    --glass-strong:rgba(255,255,255,0.12);
+    --glass-border:rgba(255,255,255,0.14);
+    --accent-1:#7C6FF0;
+    --accent-2:#34E4EA;
+    --text:#F1F2F8;
+    --muted:#9BA0C4;
+    --danger:#F0678A;
+    --font-display:'Space Grotesk', sans-serif;
+    --font-body:'Inter', sans-serif;
+    --font-mono:'JetBrains Mono', monospace;
+    --radius-lg:20px;
+    --radius-md:14px;
+    --radius-sm:8px;
+    /* Default wallpaper; overridden at runtime by applyPrefs() via
+       desktopEl.style.setProperty('--wallpaper', ...) when the user
+       picks a different one in Settings. */
+    --wallpaper: radial-gradient(circle at 15% 15%, rgba(124,111,240,0.35), transparent 45%),
+                 radial-gradient(circle at 85% 25%, rgba(52,228,234,0.25), transparent 40%),
+                 radial-gradient(circle at 50% 90%, rgba(124,111,240,0.20), transparent 50%),
+                 linear-gradient(160deg, #0B0E1A 0%, #141833 100%);
+  }
+  /* Light theme: applied via document.documentElement.setAttribute('data-theme','light')
+     from Settings. Only the tokens that need to change for readability are
+     overridden — everything else (radii, fonts, accent) stays shared. */
+  [data-theme="light"]{
+    --bg-deep:#EDEFF7;
+    --bg-deep-2:#F7F8FC;
+    --glass:rgba(20,24,51,0.06);
+    --glass-strong:rgba(20,24,51,0.10);
+    --glass-border:rgba(20,24,51,0.12);
+    --text:#1B1E2E;
+    --muted:#5C6180;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    font-family:var(--font-body); color:var(--text);
+    -webkit-font-smoothing:antialiased;
+  }
+  #desktop{
+    position:relative; width:100vw; height:100vh;
+    background: var(--wallpaper);
+    overflow:hidden;
+    user-select:none;
+    transition: background .3s ease;
+  }
+  #desktop::before{
+    content:''; position:absolute; inset:0; opacity:0.05; pointer-events:none;
+    background-image: radial-gradient(rgba(255,255,255,0.9) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+
+  /* ---------- Desktop icons ---------- */
+  #icons{
+    position:absolute; top:24px; left:24px;
+    display:flex; flex-direction:column; gap:6px;
+    z-index:2;
+  }
+  .icon{
+    width:88px; padding:10px 6px 8px; border-radius:var(--radius-sm);
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    cursor:pointer; text-align:center;
+  }
+  .icon:hover, .icon.selected{ background:var(--glass); backdrop-filter:blur(6px); }
+  .icon .glyph{
+    width:44px; height:44px; border-radius:12px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:20px; font-weight:600;
+    background:linear-gradient(145deg, var(--accent-1), var(--accent-2));
+    box-shadow:0 6px 16px rgba(124,111,240,0.35);
+  }
+  .icon span{ font-size:12px; color:var(--text); font-family:var(--font-body); text-shadow:0 1px 4px rgba(0,0,0,0.5); }
+
+  /* ---------- Windows ---------- */
+  .window{
+    position:absolute; min-width:320px; min-height:220px;
+    background:rgba(20,24,51,0.55);
+    backdrop-filter:blur(28px) saturate(140%);
+    -webkit-backdrop-filter:blur(28px) saturate(140%);
+    border:1px solid var(--glass-border);
+    border-radius:var(--radius-lg);
+    box-shadow:0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+    display:flex; flex-direction:column; overflow:hidden;
+    transition:box-shadow .15s ease;
+    z-index:10;
+  }
+  .window.focused{ box-shadow:0 30px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,111,240,0.4), inset 0 1px 0 rgba(255,255,255,0.1); }
+  .window.minimized{ display:none; }
+  /* Inactive windows read as visually "further back": dimmer titlebar text,
+     slightly reduced brightness. Keeps focus state readable at a glance. */
+  .window:not(.focused){ filter:brightness(0.92); }
+  .window:not(.focused) .titlebar .title{ color:var(--muted); }
+  .window.opening{ animation:windowIn .16s cubic-bezier(.2,.8,.3,1); }
+  .window.closing{ animation:windowOut .14s ease forwards; pointer-events:none; }
+  @keyframes windowIn{ from{ opacity:0; transform:scale(0.96); } to{ opacity:1; transform:scale(1); } }
+  @keyframes windowOut{ from{ opacity:1; transform:scale(1); } to{ opacity:0; transform:scale(0.96); } }
+  .titlebar{
+    height:44px; flex:0 0 auto; display:flex; align-items:center; gap:10px;
+    padding:0 8px 0 14px; cursor:grab; background:rgba(255,255,255,0.03);
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .titlebar:active{ cursor:grabbing; }
+  .titlebar .app-icon{
+    width:20px; height:20px; border-radius:6px;
+    background:linear-gradient(145deg, var(--accent-1), var(--accent-2));
+    flex:0 0 auto;
+  }
+  .titlebar .title{ font-family:var(--font-display); font-size:13px; font-weight:500; color:var(--text); flex:1; }
+  .winctl{
+    width:28px; height:28px; border-radius:8px; border:none;
+    background:transparent; color:var(--muted); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:13px;
+    transition:background .12s ease, color .12s ease;
+  }
+  .winctl:hover{ background:var(--glass-strong); color:var(--text); }
+  .winctl.close:hover{ background:var(--danger); color:#fff; }
+  .win-body{ flex:1; overflow:auto; padding:16px; font-size:13px; }
+  .resize-handle{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize; }
+
+  /* ---------- App content styling ---------- */
+  .about-app h2{ font-family:var(--font-display); margin:0 0 6px; font-size:20px; background:linear-gradient(90deg,var(--accent-2),var(--accent-1)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .about-app p{ color:var(--muted); line-height:1.6; margin:0 0 10px; }
+  .about-app code{ font-family:var(--font-mono); background:var(--glass); padding:2px 6px; border-radius:6px; }
+
+  .notepad textarea{
+    width:100%; height:100%; resize:none; border:none; outline:none;
+    background:transparent; color:var(--text); font-family:var(--font-mono);
+    font-size:13px; line-height:1.5;
+  }
+  .win-body.notepad{ padding:0; }
+  .notepad textarea{ padding:14px; }
+
+  .calc{ display:flex; flex-direction:column; gap:10px; height:100%; outline:none; }
+  .calc:focus-visible{ box-shadow:0 0 0 2px var(--accent-2) inset; border-radius:var(--radius-sm); }
+  .calc-display{
+    background:rgba(0,0,0,0.25); border-radius:var(--radius-sm); padding:14px;
+    font-family:var(--font-mono); font-size:26px; text-align:right; letter-spacing:1px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .calc-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; flex:1; }
+  .calc-btn{
+    border:none; border-radius:var(--radius-sm); background:var(--glass);
+    color:var(--text); font-family:var(--font-body); font-size:15px; cursor:pointer;
+    transition:background .12s ease, transform .08s ease;
+  }
+  .calc-btn:hover{ background:var(--glass-strong); }
+  .calc-btn:active{ transform:scale(0.95); }
+  .calc-btn.op{ color:var(--accent-2); }
+  .calc-btn.eq{ background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); color:#0B0E1A; font-weight:600; }
+
+  .files-list{ display:flex; flex-direction:column; gap:2px; }
+  .file-row{ display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius-sm); cursor:default; }
+  .file-row:hover{ background:var(--glass); }
+  .file-row .fi{ width:22px; height:22px; border-radius:6px; background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); flex:0 0 auto; }
+  .file-row .fname{ font-size:13px; }
+  .file-row .fmeta{ margin-left:auto; font-size:11px; color:var(--muted); }
+
+  .settings-app .row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .settings-app .row:last-child{ border-bottom:none; }
+  .swatches{ display:flex; gap:8px; }
+  .swatch{ width:26px; height:26px; border-radius:50%; cursor:pointer; border:2px solid transparent; }
+  .swatch.active{ border-color:var(--text); }
+  .theme-toggle{ display:flex; gap:4px; background:var(--glass); border-radius:999px; padding:3px; }
+  .theme-toggle button{
+    border:none; background:transparent; color:var(--muted); font-size:12px;
+    padding:6px 14px; border-radius:999px; cursor:pointer; font-family:var(--font-body);
+  }
+  .theme-toggle button.active{ background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); color:#0B0E1A; font-weight:600; }
+  .wp-swatch{ width:32px; height:24px; border-radius:6px; cursor:pointer; border:2px solid transparent; }
+  .wp-swatch.active{ border-color:var(--text); }
+
+  /* ---------- Responsive: narrow viewports ---------- */
+  @media (max-width: 720px){
+    #icons{ top:12px; left:12px; gap:2px; }
+    .icon{ width:72px; }
+    .icon .glyph{ width:36px; height:36px; font-size:16px; }
+    #start-menu{ width:92vw; }
+    .start-grid{ grid-template-columns:repeat(3,1fr); }
+    #taskbar{ gap:2px; padding:6px 8px; max-width:94vw; }
+    .task-btn{ width:36px; height:36px; font-size:15px; }
+    #clock{ padding:0 6px; font-size:11px; }
+    .window{ min-width:260px; }
+  }
+
+  /* ---------- Taskbar ---------- */
+  #taskbar{
+    position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+    display:flex; align-items:center; gap:6px;
+    padding:8px 10px; border-radius:24px;
+    background:rgba(20,24,51,0.55); backdrop-filter:blur(30px) saturate(150%);
+    -webkit-backdrop-filter:blur(30px) saturate(150%);
+    border:1px solid var(--glass-border);
+    box-shadow:0 16px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+    z-index:1000;
+  }
+  .task-btn{
+    position:relative; width:42px; height:42px; border-radius:14px; border:none;
+    background:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    font-size:17px; color:var(--text); transition:background .15s ease, transform .12s ease;
+  }
+  .task-btn:hover{ background:var(--glass); transform:translateY(-2px); }
+  .task-btn.start{ background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); color:#0B0E1A; font-weight:700; }
+  .task-btn .dot{
+    position:absolute; bottom:2px; left:50%; transform:translateX(-50%);
+    width:5px; height:5px; border-radius:50%; background:var(--accent-2); opacity:0;
+    transition:opacity .15s ease;
+  }
+  .task-btn.running .dot{ opacity:1; }
+  .task-divider{ width:1px; height:26px; background:var(--glass-border); margin:0 4px; }
+  #clock{
+    font-family:var(--font-display); font-size:13px; text-align:center; line-height:1.2;
+    padding:0 12px; cursor:default;
+  }
+  #clock .time{ font-weight:600; }
+  #clock .date{ font-size:10px; color:var(--muted); }
+
+  /* Fluid dock indicator */
+  #dock-indicator{
+    position:absolute; bottom:6px; height:3px; border-radius:2px;
+    background:linear-gradient(90deg,var(--accent-1),var(--accent-2));
+    transition: left .28s cubic-bezier(.4,0,.2,1), width .28s cubic-bezier(.4,0,.2,1), opacity .2s ease;
+    opacity:0; pointer-events:none;
+  }
+
+  /* ---------- Start menu ---------- */
+  #start-menu{
+    position:absolute; left:50%; bottom:76px; transform:translateX(-50%) translateY(12px);
+    width:420px; max-height:520px; border-radius:var(--radius-lg);
+    background:rgba(20,24,51,0.65); backdrop-filter:blur(34px) saturate(150%);
+    -webkit-backdrop-filter:blur(34px) saturate(150%);
+    border:1px solid var(--glass-border);
+    box-shadow:0 30px 70px rgba(0,0,0,0.5);
+    padding:20px; z-index:1001;
+    opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease;
+  }
+  #start-menu.open{ opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0); }
+  #start-search{
+    width:100%; padding:11px 14px; border-radius:var(--radius-md); border:1px solid var(--glass-border);
+    background:rgba(0,0,0,0.2); color:var(--text); font-family:var(--font-body); font-size:13px; outline:none;
+    margin-bottom:16px;
+  }
+  #start-search::placeholder{ color:var(--muted); }
+  .start-label{ font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin:0 0 10px; }
+  .start-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }
+  .start-app{
+    display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px 6px;
+    border-radius:var(--radius-md); cursor:pointer; background:transparent;
+  }
+  .start-app:hover{ background:var(--glass); }
+  .start-app .glyph{
+    width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); font-size:17px; font-weight:600;
+  }
+  .start-app span{ font-size:11px; color:var(--text); text-align:center; }
+  .start-footer{ display:flex; align-items:center; gap:12px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08); }
+  .start-user{ width:34px; height:34px; border-radius:50%; background:linear-gradient(145deg,var(--accent-1),var(--accent-2)); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#0B0E1A; }
+  .start-username{ font-size:13px; font-weight:500; }
+  .start-usersub{ font-size:11px; color:var(--muted); }
+  .power-btn{ margin-left:auto; width:34px; height:34px; border-radius:10px; border:none; background:var(--glass); color:var(--text); cursor:pointer; }
+  .power-btn:hover{ background:var(--danger); }
+
+  /* Context menu */
+  #ctx-menu{
+    position:absolute; min-width:190px; border-radius:var(--radius-md);
+    background:rgba(20,24,51,0.85); backdrop-filter:blur(30px);
+    border:1px solid var(--glass-border); box-shadow:0 20px 50px rgba(0,0,0,0.5);
+    padding:6px; z-index:2000; display:none;
+  }
+  #ctx-menu .ctx-item{ padding:9px 12px; font-size:13px; border-radius:8px; cursor:pointer; }
+  #ctx-menu .ctx-item:hover{ background:var(--glass-strong); }
+
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.15); border-radius:8px; }
+</style>
+</head>
+<body>
+
+<div id="desktop">
+  <div id="icons">
+    <div class="icon" data-app="about"><div class="glyph">✦</div><span>About</span></div>
+    <div class="icon" data-app="notepad"><div class="glyph">N</div><span>Notepad</span></div>
+    <div class="icon" data-app="calc"><div class="glyph">=</div><span>Calculator</span></div>
+    <div class="icon" data-app="files"><div class="glyph">📁</div><span>Files</span></div>
+    <div class="icon" data-app="settings"><div class="glyph">⚙</div><span>Settings</span></div>
+  </div>
+
+  <div id="windows-layer"></div>
+
+  <div id="start-menu">
+    <input id="start-search" placeholder="Search Aurora Shell...">
+    <div class="start-label">Pinned</div>
+    <div class="start-grid">
+      <div class="start-app" data-app="about"><div class="glyph">✦</div><span>About</span></div>
+      <div class="start-app" data-app="notepad"><div class="glyph">N</div><span>Notepad</span></div>
+      <div class="start-app" data-app="calc"><div class="glyph">=</div><span>Calculator</span></div>
+      <div class="start-app" data-app="files"><div class="glyph">📁</div><span>Files</span></div>
+      <div class="start-app" data-app="settings"><div class="glyph">⚙</div><span>Settings</span></div>
+      <div class="start-app" data-app="terminal"><div class="glyph">&gt;_</div><span>Terminal</span></div>
+    </div>
+    <div class="start-footer">
+      <div class="start-user">SN</div>
+      <div>
+        <div class="start-username">Svig</div>
+        <div class="start-usersub">Sol Plaatje University</div>
+      </div>
+      <button class="power-btn" title="Power" id="power-btn">⏻</button>
+    </div>
+  </div>
+
+  <div id="taskbar">
+    <button class="task-btn start" id="start-btn" title="Start">✦</button>
+    <div class="task-divider"></div>
+    <div id="pinned-tasks"></div>
+    <div id="running-tasks" style="display:flex; gap:6px;"></div>
+    <div class="task-divider"></div>
+    <div id="clock"><div class="time">--:--</div><div class="date">--</div></div>
+    <div id="dock-indicator"></div>
+  </div>
+
+  <div id="ctx-menu">
+    <div class="ctx-item" data-action="refresh">Refresh</div>
+    <div class="ctx-item" data-action="new-note">New Note</div>
+    <div class="ctx-item" data-action="settings">Display settings</div>
+  </div>
+</div>
+
+<script>
+/*
+  Aurora Shell — a Windows-12-inspired desktop environment that runs as a
+  single HTML file in a browser tab, on top of Windows 11. It is NOT a real
+  operating system and does not touch the actual OS in any way.
+
+  How this file is organized (read top-to-bottom):
+    1. APPS registry       — what apps exist, their default size, and their render() function
+    2. state               — the one object holding everything: open windows, stacking order, prefs
+    3. Window manager       — openApp/focusWindow/closeWindow/minimize/maximize + drag & resize
+    4. App renderers        — one function per app (renderNotepad, renderCalc, etc.), each owns
+                               its own DOM and event listeners inside the window body it's given
+    5. Desktop-level wiring — icons, Start menu, taskbar, context menu, clock, startup
+
+  Everything lives in this one IIFE so nothing leaks into the global window
+  object except what the browser itself provides.
+*/
+(function(){
+  "use strict";
+
+  /* ---------------- App registry ---------------- */
+  const APPS = {
+    about: { title:"About Aurora Shell", w:420, h:300, render: renderAbout },
+    notepad: { title:"Notepad", w:460, h:360, render: renderNotepad },
+    calc: { title:"Calculator", w:300, h:400, render: renderCalc },
+    files: { title:"Files", w:420, h:360, render: renderFiles },
+    settings: { title:"Settings", w:420, h:340, render: renderSettings },
+    terminal: { title:"Terminal", w:480, h:320, render: renderTerminal }
+  };
+
+  // BASE_Z is the z-index of the bottom-most window. Every window's actual
+  // z-index is BASE_Z + its position in state.order, so the number of
+  // windows ever opened no longer matters (fixes the old bug where the
+  // z-index counter grew forever and eventually climbed above the taskbar).
+  const BASE_Z = 20;
+
+  const state = {
+    windows: {},       // id -> {el, app, x,y, minimized, maximized}
+    order: [],          // stacking order, back-to-front (last id = topmost)
+    focusedId: null,
+    nextId: 1,
+    prefs: {                       // user-adjustable, persisted where possible
+      theme: 'dark',
+      wallpaper: 'aurora',
+      accent: { a1:'#7C6FF0', a2:'#34E4EA' }
+    }
+  };
+
+  const layer = document.getElementById('windows-layer');
+  const runningTasks = document.getElementById('running-tasks');
+  const dockIndicator = document.getElementById('dock-indicator');
+  const taskbar = document.getElementById('taskbar');
+  const desktopEl = document.getElementById('desktop');
+
+  // Reads/writes small preferences to localStorage. Wrapped in try/catch
+  // because the browser environment this file runs in (e.g. a sandboxed
+  // preview) may block storage access entirely — in that case we just
+  // fall back to in-memory-only preferences for this session.
+  function safeStorage(){
+    try {
+      const k = '__aurora_test__';
+      localStorage.setItem(k, '1'); localStorage.removeItem(k);
+      return localStorage;
+    } catch(err){ return null; }
+  }
+  const storage = safeStorage();
+  function storageGet(key, fallback){
+    if (!storage) return fallback;
+    const v = storage.getItem(key);
+    return v === null ? fallback : v;
+  }
+  function storageSet(key, value){
+    if (!storage) return;
+    try { storage.setItem(key, value); } catch(err){ /* ignore quota errors */ }
+  }
+
+  // Re-assigns z-index to every open window based on its position in
+  // state.order, so stacking is always correct and bounded (see BASE_Z).
+  function restack(){
+    state.order.forEach((id, i)=>{
+      const w = state.windows[id];
+      if (w) w.el.style.zIndex = BASE_Z + i;
+    });
+  }
+
+  /* ---------------- Window creation ---------------- */
+  function openApp(appKey){
+    // Every app in this shell is a singleton: re-opening it just focuses
+    // the window that's already there instead of stacking duplicates.
+    const existingId = Object.keys(state.windows).find(id => state.windows[id].app === appKey);
+    if (existingId){
+      restoreAndFocus(existingId);
+      closeStart();
+      return;
+    }
+    const cfg = APPS[appKey];
+    const id = 'win' + (state.nextId++);
+    const offset = (Object.keys(state.windows).length % 6) * 26;
+    // On narrow/small viewports, default windows should fit on screen
+    // instead of always opening at the full desktop size (Priority 5:
+    // responsiveness).
+    const maxW = Math.min(cfg.w, window.innerWidth - 40);
+    const maxH = Math.min(cfg.h, window.innerHeight - 140);
+    const x = Math.min(140 + offset, window.innerWidth - maxW - 20);
+    const y = Math.min(90 + offset, window.innerHeight - maxH - 110);
+
+    const el = document.createElement('div');
+    el.className = 'window focused opening';
+    el.style.left = Math.max(10,x)+'px'; el.style.top = Math.max(10,y)+'px';
+    el.style.width = maxW+'px'; el.style.height = maxH+'px';
+
+    el.innerHTML = `
+      <div class="titlebar">
+        <div class="app-icon"></div>
+        <div class="title">${cfg.title}</div>
+        <button class="winctl min" title="Minimize">–</button>
+        <button class="winctl max" title="Maximize">▢</button>
+        <button class="winctl close" title="Close">✕</button>
+      </div>
+      <div class="win-body ${appKey==='notepad'?'notepad':''}"></div>
+      <div class="resize-handle"></div>
+    `;
+    layer.appendChild(el);
+    cfg.render(el.querySelector('.win-body'));
+    // The 'opening' class drives a scale+fade keyframe (see CSS); remove it
+    // once the animation has played so later transforms (drag/resize) aren't
+    // fighting the animation.
+    el.addEventListener('animationend', ()=> el.classList.remove('opening'), { once:true });
+
+    state.windows[id] = { id, el, app:appKey, minimized:false, maximized:false };
+    state.order.push(id);
+
+    makeDraggable(el, id);
+    makeResizable(el, id);
+    el.addEventListener('mousedown', () => focusWindow(id));
+    // Windows convention: double-clicking the titlebar toggles maximize.
+    el.querySelector('.titlebar').addEventListener('dblclick', (e)=>{
+      if (e.target.closest('.winctl')) return;
+      toggleMaximize(id);
+    });
+
+    el.querySelector('.winctl.close').addEventListener('click', (e)=>{ e.stopPropagation(); closeWindow(id); });
+    el.querySelector('.winctl.min').addEventListener('click', (e)=>{ e.stopPropagation(); minimizeWindow(id); });
+    el.querySelector('.winctl.max').addEventListener('click', (e)=>{ e.stopPropagation(); toggleMaximize(id); });
+
+    focusWindow(id);
+    addTaskButton(id, appKey, cfg.title);
+    closeStart();
+  }
+
+  // Brings a window to the front and marks it as the only "focused" one.
+  // This is the single source of truth for both visual focus (the
+  // .focused class) and stacking order (state.order + restack()).
+  function focusWindow(id){
+    const w = state.windows[id];
+    if (!w) return;
+    Object.values(state.windows).forEach(win => win.el.classList.remove('focused'));
+    w.el.classList.add('focused');
+    // Move this window to the end of the order array = topmost.
+    const idx = state.order.indexOf(id);
+    if (idx !== -1) state.order.splice(idx, 1);
+    state.order.push(id);
+    restack();
+    state.focusedId = id;
+    updateDockIndicator(id);
+    updateTaskActiveStates();
+  }
+
+  function closeWindow(id){
+    const w = state.windows[id];
+    if (!w) return;
+    // Play a short closing animation, then actually remove the DOM node.
+    w.el.classList.add('closing');
+    setTimeout(()=>{
+      w.el.remove();
+      delete state.windows[id];
+      const oi = state.order.indexOf(id);
+      if (oi !== -1) state.order.splice(oi, 1);
+      const btn = document.getElementById('task-'+id);
+      if (btn) btn.remove();
+      if (state.focusedId === id) state.focusedId = null;
+      updateDockIndicator(null);
+    }, 140);
+  }
+
+  function minimizeWindow(id){
+    const w = state.windows[id];
+    if (!w) return;
+    w.el.classList.add('minimized');
+    w.minimized = true;
+    updateTaskActiveStates();
+    updateDockIndicator(null);
+  }
+
+  function restoreAndFocus(id){
+    const w = state.windows[id];
+    if (!w) return;
+    if (w.minimized){ w.el.classList.remove('minimized'); w.minimized = false; }
+    focusWindow(id);
+  }
+
+  function toggleMaximize(id){
+    const w = state.windows[id];
+    if (!w) return;
+    if (!w.maximized){
+      w.prev = { x:w.el.offsetLeft, y:w.el.offsetTop, width:w.el.style.width, height:w.el.style.height };
+      w.el.style.left = '10px'; w.el.style.top = '10px';
+      w.el.style.width = (window.innerWidth-20)+'px';
+      w.el.style.height = (window.innerHeight-96)+'px';
+      w.maximized = true;
+    } else {
+      w.el.style.left = w.prev.x+'px'; w.el.style.top = w.prev.y+'px';
+      w.el.style.width = w.prev.width; w.el.style.height = w.prev.height;
+      w.maximized = false;
+    }
+  }
+
+  function addTaskButton(id, appKey, title){
+    const btn = document.createElement('button');
+    btn.className = 'task-btn running';
+    btn.id = 'task-'+id;
+    btn.title = title;
+    btn.textContent = appGlyph(appKey);
+    btn.innerHTML += '<span class="dot"></span>';
+    btn.addEventListener('click', () => {
+      const w = state.windows[id];
+      if (!w) return;
+      if (w.minimized || state.focusedId !== id){ restoreAndFocus(id); }
+      else { minimizeWindow(id); }
+    });
+    runningTasks.appendChild(btn);
+    updateTaskActiveStates();
+  }
+
+  function updateTaskActiveStates(){
+    Object.values(state.windows).forEach(w=>{
+      const btn = document.getElementById('task-'+w.id);
+      if (!btn) return;
+      btn.classList.toggle('running', true);
+      btn.style.background = (state.focusedId===w.id && !w.minimized) ? 'var(--glass-strong)' : 'transparent';
+    });
+  }
+
+  function updateDockIndicator(id){
+    if (!id || !state.windows[id]){ dockIndicator.style.opacity = '0'; return; }
+    const btn = document.getElementById('task-'+id);
+    if (!btn){ dockIndicator.style.opacity = '0'; return; }
+    const tbRect = taskbar.getBoundingClientRect();
+    const bRect = btn.getBoundingClientRect();
+    dockIndicator.style.left = (bRect.left - tbRect.left) + 'px';
+    dockIndicator.style.width = bRect.width + 'px';
+    dockIndicator.style.opacity = '1';
+  }
+
+  function appGlyph(appKey){
+    return { about:'✦', notepad:'N', calc:'=', files:'📁', settings:'⚙', terminal:'>_' }[appKey] || '•';
+  }
+
+  /* ---------------- Drag & resize ---------------- */
+  // How much of a window must stay reachable on screen. We don't require the
+  // whole window to stay visible (you can still push most of it off the top,
+  // like real OSes do) — just enough of the titlebar to grab it again.
+  const EDGE_MARGIN = 80;
+
+  function clampPosition(left, top, width){
+    const minLeft = EDGE_MARGIN - width;   // allow dragging left, but keep 80px visible
+    const maxLeft = window.innerWidth - EDGE_MARGIN;
+    const minTop = 0;                       // never let the titlebar go above the screen
+    const maxTop = window.innerHeight - 48; // keep titlebar above the taskbar area
+    return {
+      left: Math.min(Math.max(left, minLeft), maxLeft),
+      top: Math.min(Math.max(top, minTop), maxTop)
+    };
+  }
+
+  function makeDraggable(el, id){
+    const bar = el.querySelector('.titlebar');
+    let dragging=false, sx=0, sy=0, ox=0, oy=0, pendingFrame=null;
+    bar.addEventListener('mousedown', (e)=>{
+      if (e.target.closest('.winctl')) return;
+      dragging = true;
+      sx = e.clientX; sy = e.clientY;
+      ox = el.offsetLeft; oy = el.offsetTop;
+      focusWindow(id);
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e)=>{
+      if (!dragging) return;
+      const w = state.windows[id];
+      if (w && w.maximized) return;
+      // Batch DOM writes into one requestAnimationFrame per repaint instead
+      // of writing styles on every single mousemove event — this is what
+      // keeps dragging smooth even on fast mouse movement.
+      if (pendingFrame) return;
+      pendingFrame = requestAnimationFrame(()=>{
+        pendingFrame = null;
+        const rawLeft = ox + (e.clientX - sx);
+        const rawTop = oy + (e.clientY - sy);
+        const { left, top } = clampPosition(rawLeft, rawTop, el.offsetWidth);
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+        if (state.focusedId===id) updateDockIndicator(id);
+      });
+    });
+    window.addEventListener('mouseup', ()=>{ dragging=false; });
+  }
+
+  function makeResizable(el, id){
+    const handle = el.querySelector('.resize-handle');
+    let resizing=false, sx=0, sy=0, sw=0, sh=0, pendingFrame=null;
+    handle.addEventListener('mousedown', (e)=>{
+      resizing = true; sx=e.clientX; sy=e.clientY;
+      sw = el.offsetWidth; sh = el.offsetHeight;
+      e.preventDefault(); e.stopPropagation();
+    });
+    window.addEventListener('mousemove', (e)=>{
+      if (!resizing) return;
+      if (pendingFrame) return;
+      pendingFrame = requestAnimationFrame(()=>{
+        pendingFrame = null;
+        const maxW = window.innerWidth - el.offsetLeft - 10;
+        const maxH = window.innerHeight - el.offsetTop - 90;
+        el.style.width = Math.min(maxW, Math.max(280, sw + (e.clientX-sx))) + 'px';
+        el.style.height = Math.min(maxH, Math.max(200, sh + (e.clientY-sy))) + 'px';
+      });
+    });
+    window.addEventListener('mouseup', ()=>{ resizing=false; });
+  }
+
+  /* ---------------- App renderers ---------------- */
+  function renderAbout(body){
+    body.innerHTML = `
+      <div class="about-app">
+        <h2>Aurora Shell</h2>
+        <p>A Windows-12-inspired desktop environment, running as a browser app on top of your existing Windows 11 install. It is not a real operating system and does not modify Windows in any way.</p>
+        <p>Drag windows by the titlebar (double-click to maximize), resize from the bottom-right corner, and launch apps from the Start menu or desktop icons.</p>
+        <p><code>Version 0.2</code> · window manager, Start search, functional apps, themes &amp; wallpapers</p>
+      </div>`;
+  }
+
+  // Notepad has no access to your real filesystem (browsers don't allow
+  // that), so "save" means downloading a .txt file, and "open" means
+  // picking a file through the browser's native file dialog. We also
+  // keep a lightweight autosave draft in localStorage (if available) so
+  // reopening Notepad in the same browser session doesn't lose your text.
+  function renderNotepad(body){
+    const draft = storageGet('aurora-notepad-draft',
+      'Aurora Shell Notepad\n\nWindows 12-style shell — running on Windows 11 Pro 24H2.\n');
+    body.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%;">
+        <div style="display:flex; gap:6px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.06); flex:0 0 auto;">
+          <button class="calc-btn" id="np-new" style="padding:6px 10px; flex:none;">New</button>
+          <button class="calc-btn" id="np-open" style="padding:6px 10px; flex:none;">Open…</button>
+          <button class="calc-btn" id="np-save" style="padding:6px 10px; flex:none;">Save as…</button>
+          <span id="np-status" style="margin-left:auto; align-self:center; font-size:11px; color:var(--muted);"></span>
+          <input type="file" id="np-file-input" accept=".txt,.md,text/plain" style="display:none;">
+        </div>
+        <textarea id="np-text" placeholder="Start typing...">${escapeHtml(draft)}</textarea>
+      </div>`;
+    const textarea = body.querySelector('#np-text');
+    const status = body.querySelector('#np-status');
+    const fileInput = body.querySelector('#np-file-input');
+    let saveTimer = null;
+
+    // Debounced autosave: wait 500ms after the last keystroke before writing,
+    // so we're not hitting localStorage on every single character.
+    textarea.addEventListener('input', ()=>{
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(()=>{
+        storageSet('aurora-notepad-draft', textarea.value);
+        status.textContent = storage ? 'Draft autosaved' : 'Autosave unavailable';
+        setTimeout(()=>{ status.textContent=''; }, 1500);
+      }, 500);
+    });
+
+    body.querySelector('#np-new').addEventListener('click', ()=>{
+      if (textarea.value && !confirm('Clear current text?')) return;
+      textarea.value = '';
+      textarea.focus();
+    });
+
+    // "Save as…" downloads the current text as a .txt file via a temporary
+    // object URL — the standard way to write a file from a browser tab.
+    body.querySelector('#np-save').addEventListener('click', ()=>{
+      const blob = new Blob([textarea.value], { type:'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'note.txt';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      status.textContent = 'Downloaded note.txt';
+      setTimeout(()=>{ status.textContent=''; }, 1500);
+    });
+
+    // "Open…" triggers the native file picker, then reads the chosen file's
+    // text content with FileReader.
+    body.querySelector('#np-open').addEventListener('click', ()=> fileInput.click());
+    fileInput.addEventListener('change', ()=>{
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{ textarea.value = reader.result; status.textContent = 'Opened ' + file.name; setTimeout(()=>{ status.textContent=''; }, 1500); };
+      reader.readAsText(file);
+      fileInput.value = '';
+    });
+  }
+
+  // Small helper so text dropped into innerHTML (like the notepad draft)
+  // can't break the markup or be interpreted as HTML.
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
+  function renderCalc(body){
+    body.innerHTML = `
+      <div class="calc" tabindex="0" id="calc-root">
+        <div class="calc-display" id="calc-disp">0</div>
+        <div class="calc-grid">
+          <button class="calc-btn" data-k="C">C</button>
+          <button class="calc-btn" data-k="(">(</button>
+          <button class="calc-btn" data-k=")">)</button>
+          <button class="calc-btn op" data-k="/">÷</button>
+          <button class="calc-btn" data-k="7">7</button>
+          <button class="calc-btn" data-k="8">8</button>
+          <button class="calc-btn" data-k="9">9</button>
+          <button class="calc-btn op" data-k="*">×</button>
+          <button class="calc-btn" data-k="4">4</button>
+          <button class="calc-btn" data-k="5">5</button>
+          <button class="calc-btn" data-k="6">6</button>
+          <button class="calc-btn op" data-k="-">−</button>
+          <button class="calc-btn" data-k="1">1</button>
+          <button class="calc-btn" data-k="2">2</button>
+          <button class="calc-btn" data-k="3">3</button>
+          <button class="calc-btn op" data-k="+">+</button>
+          <button class="calc-btn" data-k="0">0</button>
+          <button class="calc-btn" data-k=".">.</button>
+          <button class="calc-btn" data-k="back">⌫</button>
+          <button class="calc-btn eq" data-k="=">=</button>
+        </div>
+      </div>`;
+    const disp = body.querySelector('#calc-disp');
+    const calcRoot = body.querySelector('#calc-root');
+    let expr = '';
+
+    // Central function so both button clicks and keyboard presses drive
+    // the same logic — one source of truth for "what does this key do".
+    function pressKey(k){
+      if (k==='C'){ expr=''; }
+      else if (k==='back'){ expr = expr.slice(0,-1); }
+      else if (k==='='){
+        try {
+          if (!/^[0-9+\-*/().\s]+$/.test(expr)) throw new Error('invalid');
+          // eslint-disable-next-line no-eval
+          const result = Function('"use strict"; return (' + expr + ')')();
+          expr = String(result);
+        } catch(err){ expr = 'Error'; }
+      } else { expr += k; }
+      disp.textContent = expr || '0';
+    }
+
+    body.querySelectorAll('.calc-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=> pressKey(btn.dataset.k));
+    });
+
+    // Keyboard support, scoped to this calculator's own root element (it
+    // only fires while the calculator window has focus) so typing in other
+    // windows, like Notepad, is never intercepted.
+    calcRoot.addEventListener('keydown', (e)=>{
+      const key = e.key;
+      if (/^[0-9.()]$/.test(key)) pressKey(key);
+      else if (['+','-','*','/'].includes(key)) pressKey(key);
+      else if (key === 'Enter' || key === '=') pressKey('=');
+      else if (key === 'Backspace') pressKey('back');
+      else if (key === 'Escape') pressKey('C');
+      else return;
+      e.preventDefault();
+    });
+    calcRoot.focus();
+  }
+
+  // Browsers deliberately don't let a webpage list or browse your real
+  // folders — that's a security boundary, not a limitation we can code
+  // around. What we CAN do: let you pick real files via the native picker,
+  // show their real name/size/type, and preview text-based ones inline.
+  function renderFiles(body){
+    body.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button class="calc-btn" id="files-pick" style="padding:8px 14px; flex:none;">Choose files…</button>
+          <span style="font-size:11px; color:var(--muted);">Browsers can't list your real folders — pick files to preview them here.</span>
+          <input type="file" id="files-input" multiple style="display:none;">
+        </div>
+        <div class="files-list" id="files-list" style="flex:0 0 auto; max-height:40%; overflow:auto;"></div>
+        <div id="files-preview" style="flex:1; overflow:auto; background:rgba(0,0,0,0.18); border-radius:var(--radius-sm); padding:10px; font-family:var(--font-mono); font-size:12px; white-space:pre-wrap; display:none;"></div>
+      </div>`;
+    const input = body.querySelector('#files-input');
+    const list = body.querySelector('#files-list');
+    const preview = body.querySelector('#files-preview');
+
+    body.querySelector('#files-pick').addEventListener('click', ()=> input.click());
+    input.addEventListener('change', ()=>{
+      const files = Array.from(input.files);
+      list.innerHTML = files.map((f,i)=>`
+        <div class="file-row" data-i="${i}">
+          <div class="fi"></div>
+          <div class="fname">${escapeHtml(f.name)}</div>
+          <div class="fmeta">${formatBytes(f.size)}</div>
+        </div>`).join('') || '<div style="color:var(--muted); font-size:12px; padding:8px;">No files selected.</div>';
+
+      list.querySelectorAll('.file-row').forEach(row=>{
+        row.addEventListener('click', ()=>{
+          const file = files[Number(row.dataset.i)];
+          const looksLikeText = /^text\//.test(file.type) || /\.(txt|md|js|css|html|json|cpp|c|h|py|csv)$/i.test(file.name);
+          if (!looksLikeText){
+            preview.style.display = 'block';
+            preview.textContent = `Preview not available for "${file.name}" (${file.type || 'unknown type'}).`;
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = ()=>{
+            preview.style.display = 'block';
+            preview.textContent = reader.result;
+          };
+          reader.readAsText(file);
+        });
+      });
+    });
+  }
+
+  function formatBytes(bytes){
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  }
+
+  // Wallpaper presets: each is a full CSS background value (can be several
+  // layered gradients) applied to the #desktop element via a CSS variable,
+  // so both this file's default look and any future preset stay consistent.
+  const WALLPAPERS = {
+    aurora: `radial-gradient(circle at 15% 15%, rgba(124,111,240,0.35), transparent 45%),
+              radial-gradient(circle at 85% 25%, rgba(52,228,234,0.25), transparent 40%),
+              radial-gradient(circle at 50% 90%, rgba(124,111,240,0.20), transparent 50%),
+              linear-gradient(160deg, var(--bg-deep) 0%, var(--bg-deep-2) 100%)`,
+    sunset: `radial-gradient(circle at 20% 20%, rgba(240,103,138,0.35), transparent 45%),
+              radial-gradient(circle at 80% 30%, rgba(255,193,104,0.3), transparent 45%),
+              linear-gradient(160deg, #1a0e1f 0%, #2b1330 100%)`,
+    forest: `radial-gradient(circle at 20% 20%, rgba(92,214,92,0.28), transparent 45%),
+              radial-gradient(circle at 80% 70%, rgba(52,228,234,0.22), transparent 45%),
+              linear-gradient(160deg, #0b1a12 0%, #0f2a1c 100%)`,
+    mono: `linear-gradient(160deg, #14161f 0%, #1e2130 100%)`
+  };
+
+  // Applies the current state.prefs (theme / wallpaper / accent) to the DOM.
+  // Called once on load, and again whenever Settings changes something.
+  function applyPrefs(){
+    document.documentElement.setAttribute('data-theme', state.prefs.theme);
+    desktopEl.style.setProperty('--wallpaper', WALLPAPERS[state.prefs.wallpaper] || WALLPAPERS.aurora);
+    document.documentElement.style.setProperty('--accent-1', state.prefs.accent.a1);
+    document.documentElement.style.setProperty('--accent-2', state.prefs.accent.a2);
+  }
+
+  function renderSettings(body){
+    body.innerHTML = `
+      <div class="settings-app">
+        <div class="row">
+          <span>Theme</span>
+          <div class="theme-toggle" id="theme-toggle">
+            <button data-theme="dark" class="${state.prefs.theme==='dark'?'active':''}">Dark</button>
+            <button data-theme="light" class="${state.prefs.theme==='light'?'active':''}">Light</button>
+          </div>
+        </div>
+        <div class="row">
+          <span>Wallpaper</span>
+          <div class="swatches" id="wallpaper-swatches">
+            <div class="wp-swatch ${state.prefs.wallpaper==='aurora'?'active':''}" data-wp="aurora" style="background:linear-gradient(135deg,#7C6FF0,#34E4EA)"></div>
+            <div class="wp-swatch ${state.prefs.wallpaper==='sunset'?'active':''}" data-wp="sunset" style="background:linear-gradient(135deg,#F0678A,#FFC168)"></div>
+            <div class="wp-swatch ${state.prefs.wallpaper==='forest'?'active':''}" data-wp="forest" style="background:linear-gradient(135deg,#5CD65C,#34E4EA)"></div>
+            <div class="wp-swatch ${state.prefs.wallpaper==='mono'?'active':''}" data-wp="mono" style="background:linear-gradient(135deg,#3a3f55,#1e2130)"></div>
+          </div>
+        </div>
+        <div class="row">
+          <span>Accent color</span>
+          <div class="swatches" id="accent-swatches">
+            <div class="swatch ${state.prefs.accent.a1==='#7C6FF0'?'active':''}" style="background:#7C6FF0" data-a1="#7C6FF0" data-a2="#34E4EA"></div>
+            <div class="swatch ${state.prefs.accent.a1==='#F0678A'?'active':''}" style="background:#F0678A" data-a1="#F0678A" data-a2="#FFC168"></div>
+            <div class="swatch ${state.prefs.accent.a1==='#34E4EA'?'active':''}" style="background:#34E4EA" data-a1="#34E4EA" data-a2="#7C6FF0"></div>
+            <div class="swatch ${state.prefs.accent.a1==='#5CD65C'?'active':''}" style="background:#5CD65C" data-a1="#5CD65C" data-a2="#34E4EA"></div>
+          </div>
+        </div>
+        <div class="row"><span>Version</span><span style="color:var(--muted)">Aurora Shell 0.2</span></div>
+        <div class="row"><span>Running on</span><span style="color:var(--muted)">Windows 11 Pro 24H2 (browser-based, not a real OS)</span></div>
+        <div class="row" style="border:none; font-size:11px; color:var(--muted);">
+          ${storage ? 'Preferences save automatically in this browser.' : 'Storage unavailable here — preferences reset when this page reloads.'}
+        </div>
+      </div>`;
+
+    body.querySelectorAll('#theme-toggle button').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        body.querySelectorAll('#theme-toggle button').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        state.prefs.theme = btn.dataset.theme;
+        storageSet('aurora-theme', state.prefs.theme);
+        applyPrefs();
+      });
+    });
+    body.querySelectorAll('.wp-swatch').forEach(sw=>{
+      sw.addEventListener('click', ()=>{
+        body.querySelectorAll('.wp-swatch').forEach(s=>s.classList.remove('active'));
+        sw.classList.add('active');
+        state.prefs.wallpaper = sw.dataset.wp;
+        storageSet('aurora-wallpaper', state.prefs.wallpaper);
+        applyPrefs();
+      });
+    });
+    body.querySelectorAll('#accent-swatches .swatch').forEach(sw=>{
+      sw.addEventListener('click', ()=>{
+        body.querySelectorAll('#accent-swatches .swatch').forEach(s=>s.classList.remove('active'));
+        sw.classList.add('active');
+        state.prefs.accent = { a1: sw.dataset.a1, a2: sw.dataset.a2 };
+        storageSet('aurora-accent', JSON.stringify(state.prefs.accent));
+        applyPrefs();
+      });
+    });
+  }
+
+  function renderTerminal(body){
+    body.innerHTML = `<div style="font-family:var(--font-mono); font-size:12.5px; line-height:1.6;">
+      <div style="color:var(--muted)">Aurora Shell Terminal — type 'help'</div>
+      <div id="term-out"></div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <span style="color:var(--accent-2)">svig@aurora&gt;</span>
+        <input id="term-in" style="flex:1; background:transparent; border:none; outline:none; color:var(--text); font-family:var(--font-mono); font-size:12.5px;">
+      </div>
+    </div>`;
+    const out = body.querySelector('#term-out');
+    const inp = body.querySelector('#term-in');
+    inp.addEventListener('keydown', (e)=>{
+      if (e.key !== 'Enter') return;
+      const cmd = inp.value.trim();
+      inp.value = '';
+      // 'clear' is handled specially: it wipes the output instead of going
+      // through handleCmd, which just returns text to print. (The old
+      // version routed 'clear' through handleCmd, which meant it printed an
+      // empty response line rather than actually clearing the screen.)
+      if (cmd === 'clear'){ out.innerHTML = ''; return; }
+      const line = document.createElement('div');
+      line.innerHTML = `<span style="color:var(--accent-2)">svig@aurora&gt;</span> ${escapeHtml(cmd)}`;
+      out.appendChild(line);
+      const resp = document.createElement('div');
+      resp.style.color = 'var(--muted)';
+      resp.textContent = handleCmd(cmd);
+      out.appendChild(resp);
+      body.scrollTop = body.scrollHeight;
+    });
+  }
+
+  function handleCmd(cmd){
+    if (cmd === 'help') return 'Commands: help, date, whoami, motto, theme <dark|light>, wallpaper <aurora|sunset|forest|mono>, clear';
+    if (cmd === 'date') return new Date().toString();
+    if (cmd === 'whoami') return 'Svig — CS1, Sol Plaatje University';
+    if (cmd === 'motto') return '"The best time to study is when you don\u2019t need to."';
+    if (cmd.startsWith('theme ')){
+      const val = cmd.split(' ')[1];
+      if (val !== 'dark' && val !== 'light') return 'Usage: theme <dark|light>';
+      state.prefs.theme = val; storageSet('aurora-theme', val); applyPrefs();
+      return 'Theme set to ' + val;
+    }
+    if (cmd.startsWith('wallpaper ')){
+      const val = cmd.split(' ')[1];
+      if (!WALLPAPERS[val]) return 'Usage: wallpaper <' + Object.keys(WALLPAPERS).join('|') + '>';
+      state.prefs.wallpaper = val; storageSet('aurora-wallpaper', val); applyPrefs();
+      return 'Wallpaper set to ' + val;
+    }
+    return cmd ? `Unknown command: ${cmd}` : '';
+  }
+
+  /* ---------------- Icons ---------------- */
+  document.querySelectorAll('#icons .icon').forEach(icon=>{
+    icon.addEventListener('click', ()=>{
+      document.querySelectorAll('#icons .icon').forEach(i=>i.classList.remove('selected'));
+      icon.classList.add('selected');
+    });
+    icon.addEventListener('dblclick', ()=> openApp(icon.dataset.app));
+  });
+
+  /* ---------------- Start menu ---------------- */
+  const startBtn = document.getElementById('start-btn');
+  const startMenu = document.getElementById('start-menu');
+  const startSearch = document.getElementById('start-search');
+  const startApps = Array.from(document.querySelectorAll('.start-app'));
+
+  function toggleStart(){
+    startMenu.classList.toggle('open');
+    if (startMenu.classList.contains('open')) startSearch.focus();
+  }
+  function closeStart(){
+    startMenu.classList.remove('open');
+    startSearch.value = '';
+    filterStartApps('');
+  }
+  startBtn.addEventListener('click', (e)=>{ e.stopPropagation(); toggleStart(); });
+  startApps.forEach(a=>{
+    a.addEventListener('click', ()=> openApp(a.dataset.app));
+  });
+
+  // Filters the pinned-apps grid by app name as the user types, and
+  // remembers which apps are currently visible so Enter can launch the
+  // first match.
+  function filterStartApps(query){
+    const q = query.trim().toLowerCase();
+    let firstMatch = null;
+    startApps.forEach(a=>{
+      const name = a.querySelector('span').textContent.toLowerCase();
+      const matches = q === '' || name.includes(q);
+      a.style.display = matches ? '' : 'none';
+      if (matches && !firstMatch) firstMatch = a;
+    });
+    return firstMatch;
+  }
+  startSearch.addEventListener('input', ()=> filterStartApps(startSearch.value));
+  startSearch.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter'){
+      const match = filterStartApps(startSearch.value);
+      if (match) openApp(match.dataset.app);
+    } else if (e.key === 'Escape'){
+      closeStart();
+    }
+  });
+  document.getElementById('power-btn').addEventListener('click', ()=>{
+    document.getElementById('desktop').style.transition = 'opacity .5s ease';
+    document.getElementById('desktop').style.opacity = '0';
+    setTimeout(()=>{ document.getElementById('desktop').style.opacity=''; closeStart(); }, 600);
+  });
+  document.addEventListener('click', (e)=>{
+    if (!startMenu.contains(e.target) && e.target !== startBtn) closeStart();
+  });
+
+  /* ---------------- Context menu ---------------- */
+  const ctx = document.getElementById('ctx-menu');
+  document.getElementById('desktop').addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    ctx.style.left = e.clientX+'px'; ctx.style.top = e.clientY+'px';
+    ctx.style.display = 'block';
+  });
+  document.addEventListener('click', ()=>{ ctx.style.display='none'; });
+  ctx.querySelectorAll('.ctx-item').forEach(item=>{
+    item.addEventListener('click', ()=>{
+      const a = item.dataset.action;
+      if (a==='new-note') openApp('notepad');
+      if (a==='settings') openApp('settings');
+    });
+  });
+
+  /* ---------------- Clock ---------------- */
+  function tick(){
+    const now = new Date();
+    document.querySelector('#clock .time').textContent =
+      now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    document.querySelector('#clock .date').textContent =
+      now.toLocaleDateString([], {weekday:'short', day:'2-digit', month:'short'});
+  }
+  tick(); setInterval(tick, 1000);
+
+  // Escape closes whichever overlay (Start menu or context menu) is open.
+  document.addEventListener('keydown', (e)=>{
+    if (e.key !== 'Escape') return;
+    if (startMenu.classList.contains('open')) closeStart();
+    if (ctx.style.display === 'block') ctx.style.display = 'none';
+  });
+
+  // Restore any previously-saved preferences (falls back to defaults if
+  // storage is unavailable or this is the first visit).
+  state.prefs.theme = storageGet('aurora-theme', state.prefs.theme);
+  state.prefs.wallpaper = storageGet('aurora-wallpaper', state.prefs.wallpaper);
+  try {
+    const savedAccent = storageGet('aurora-accent', null);
+    if (savedAccent) state.prefs.accent = JSON.parse(savedAccent);
+  } catch(err){ /* ignore malformed stored value */ }
+
+  /* Reposition dock indicator on resize */
+  window.addEventListener('resize', ()=> updateDockIndicator(state.focusedId));
+
+  /* Open About on first load */
+  applyPrefs();
+  openApp('about');
+})();
+</script>
+</body>
+</html>
